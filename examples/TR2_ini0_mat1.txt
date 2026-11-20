@@ -1,0 +1,79 @@
+TR=2  ini_r=0  mat_r=1
+GObj=16.000000
+dB=GDeg1=16  dR=GDeg2=16  dM=GMat=16
+nLIN=0  alpha=0.396241  lin_at=[]
+
+round 0  forward
+X
+B B R C
+B R R R
+C C R C
+C R R C
+Y
+R R B B
+R C B G
+C C R C
+C R R C
+Z
+R R B B
+G R C B
+R C C C
+R R C C
+
+round 1  match
+X
+C C B B
+R R B B
+B R C B
+R R B B
+Y
+R B G B
+C R G G
+B R C B
+R R B B
+Z
+R B G B
+G C R G
+C B B R
+R B B R
+
+TK1 at round 0
+C R C R
+C C R B
+C B B C
+B C B B
+TK2 at round 0
+B B B B
+B C B C
+B B R R
+R B B R
+TK3 at round 0
+R B R R
+R R R C
+R R B C
+R B R R
+
+match equations
+column 0  gamma=4
+x0[0] ⊕ x2[8] ⊕ x3[12] ⊕ y0[0] = 0
+x0[0] ⊕ y1[4] = 0
+x1[4] ⊕ x2[8] ⊕ y2[8] = 0
+x0[0] ⊕ x2[8] ⊕ y3[12] = 0
+column 1  gamma=4
+x0[1] ⊕ x2[9] ⊕ x3[13] ⊕ y0[1] = 0
+x0[1] ⊕ y1[5] = 0
+x1[5] ⊕ x2[9] ⊕ y2[9] = 0
+x0[1] ⊕ x2[9] ⊕ y3[13] = 0
+column 2  gamma=4
+x0[2] ⊕ x2[10] ⊕ x3[14] ⊕ y0[2] = 0
+x0[2] ⊕ y1[6] = 0
+x1[6] ⊕ x2[10] ⊕ y2[10] = 0
+x0[2] ⊕ x2[10] ⊕ y3[14] = 0
+column 3  gamma=4
+x0[3] ⊕ x2[11] ⊕ x3[15] ⊕ y0[3] = 0
+x0[3] ⊕ y1[7] = 0
+x1[7] ⊕ x2[11] ⊕ y2[11] = 0
+x0[3] ⊕ x2[11] ⊕ y3[15] = 0
+
+GDeg1 是剩余蓝密钥单元 dB，GDeg2 是剩余红密钥单元 dR，GMat 是四列 γ 之和，并且至少为 1。绿色按非白参加匹配。有效过滤还要按打出来的方程做联合独立性检验。
+status=optimal
