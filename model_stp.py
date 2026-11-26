@@ -17,6 +17,7 @@ from CPMITM_LIN import (
     Cell,
     add_3xor,
     add_copy,
+    add_gnd,
     add_initial,
     add_match_column,
     add_mc_backward,
@@ -58,6 +59,11 @@ class Index:
         self.GDeg1 = None
         self.GDeg2 = None
         self.GMat = None
+        self.gnd = []
+        self.guess_b = []
+        self.guess_r = []
+        self.guess_br = []
+        self.enable_gnd = True
 
 
 def _states(model, prefix, rounds):
@@ -106,6 +112,21 @@ def _add_sr(model, rnd, after_art, after_sr):
         add_copy(model, after_art[SHIFT[i]], after_sr[i], f"SR_r{rnd}_j{i}")
 
 
+def _gnd_input(model, index, rnd, direction, state_name, cells):
+    if not index.enable_gnd:
+        return cells
+    result = []
+    for j, before in enumerate(cells):
+        after, (gb, gr, gbr) = add_gnd(model, before, f"GND_{direction}_r{rnd}_j{j}")
+        index.guess_b.append(gb)
+        index.guess_r.append(gr)
+        index.guess_br.append(gbr)
+        index.gnd.append(dict(round=rnd, cell=j, direction=direction, state=state_name,
+                              before=before, after=after, gb=gb, gr=gr, gbr=gbr))
+        result.append(after)
+    return result
+
+
 def _add_round(model, index, rnd, kind):
     x_state = index.X[rnd]
     u_state = index.U[rnd]
@@ -122,10 +143,12 @@ def _add_round(model, index, rnd, kind):
         _add_art(model, index, rnd, u_state, y_state, forward=False)
     _add_sr(model, rnd, y_state, z_state)
     if kind == "F":
-        for pair in add_mc_forward(model, z_state, index.X[nxt], f"MC_r{rnd}"):
+        mc_input = _gnd_input(model, index, rnd, "F", "Z", z_state)
+        for pair in add_mc_forward(model, mc_input, index.X[nxt], f"MC_r{rnd}"):
             _record_enc(index, pair)
     elif kind == "B":
-        for pair in add_mc_backward(model, z_state, index.X[nxt], f"MC_r{rnd}"):
+        mc_input = _gnd_input(model, index, rnd, "B", "X", index.X[nxt])
+        for pair in add_mc_backward(model, z_state, mc_input, f"MC_r{rnd}"):
             _record_enc(index, pair)
     else:
         for col in range(4):
@@ -134,7 +157,7 @@ def _add_round(model, index, rnd, kind):
             index.gammas.append(add_match_column(model, x_cells, y_cells, f"MAT_c{col}"))
 
 
-def build_model(total_round, ini_r, mat_r):
+def build_model(total_round, ini_r, mat_r, enable_gnd=True):
     """建好模型并设好目标，不求解。"""
     forward, mat, backward = round_partition(total_round, ini_r, mat_r)
     model = gp.Model(f"skinny_lin_TR{total_round}_ini{ini_r}_mat{mat}")
@@ -145,6 +168,7 @@ def build_model(total_round, ini_r, mat_r):
     index.mat_r = mat
     index.forward = forward
     index.backward = backward
+    index.enable_gnd = enable_gnd
     index.X = _states(model, "X", total_round)
     index.U = _states(model, "U", total_round)
     index.Y = _states(model, "Y", total_round)
@@ -195,6 +219,15 @@ def build_model(total_round, ini_r, mat_r):
     model.addConstr(index.GDeg2 == lam_ksa_r - gp.quicksum(index.ksa_r), name="dR")
     model.addConstr(index.GMat == gp.quicksum(index.gammas), name="dM")
     index.nlin = gp.quicksum(ell_vars)
+    index.n_gb = gp.quicksum(index.guess_b)
+    index.n_gr = gp.quicksum(index.guess_r)
+    index.n_gbr = gp.quicksum(index.guess_br)
+    # 由于 0 <= nLIN <= 2 且 2*ALPHA < 1，以下整数约束等价于
+    # 三个扣除 LIN 与 GnD 代价的目标分量均严格大于 0。
+    model.addConstr(index.GDeg1 - index.n_gr - index.n_gbr >= 1, name="positive_blue")
+    model.addConstr(index.GDeg2 - index.n_gb - index.n_gbr >= 1, name="positive_red")
+    model.addConstr(index.GMat - index.n_gb - index.n_gr - index.n_gbr >= 1,
+                    name="positive_match")
     return model, index
 
 
@@ -247,6 +280,16 @@ def extract_solution(index: Index):
     kind[index.mat_r] = "match"
     for rnd in index.backward:
         kind[rnd] = "backward"
+    gnd_at = []
+    for entry in index.gnd:
+        for key, label in (("gb", "B"), ("gr", "R"), ("gbr", "BR")):
+            if _bit(entry[key].X):
+                gnd_at.append({"round": entry["round"], "cell": entry["cell"],
+                               "direction": entry["direction"], "state": entry["state"],
+                               "state_round": (entry["round"] if entry["direction"] == "F"
+                                               else (entry["round"] + 1) % index.tr),
+                               "before": _color_of(entry["before"]),
+                               "after": _color_of(entry["after"]), "type": label})
     return {
         "TR": index.tr,
         "ini_r": index.ini_r,
@@ -258,6 +301,11 @@ def extract_solution(index: Index):
         "alpha": ALPHA,
         "nLIN": len(lin_at),
         "lin_at": lin_at,
+        "gnd_enabled": index.enable_gnd,
+        "gnd_counts": {"gb": sum(_bit(v.X) for v in index.guess_b),
+                       "gr": sum(_bit(v.X) for v in index.guess_r),
+                       "gbr": sum(_bit(v.X) for v in index.guess_br)},
+        "gnd_at": gnd_at,
         "kind": {str(r): kind[r] for r in range(index.tr)},
         "X": [_state_colors(index.X[r]) for r in range(index.tr)],
         "U": [_state_colors(index.U[r]) for r in range(index.tr)],
@@ -272,7 +320,8 @@ def extract_solution(index: Index):
         "note": (
             "GDeg1 是剩余蓝密钥单元 dB，GDeg2 是剩余红密钥单元 dR，"
             "GMat 是四列 γ 之和，并且至少为 1。绿色按非白参加匹配。"
-            "有效过滤还要按打出来的方程做联合独立性检验。"
+            "GnD 的 W→G 是双向猜测的着色抽象，不保证与论文完整虚拟状态模型等价；"
+            "须独立验证具体猜测的相容性、匹配方程和约束独立性。"
         ),
     }
 
@@ -285,6 +334,8 @@ def format_report(sol) -> str:
         f"GObj={sol['GObj']:.6f}",
         f"dB=GDeg1={sol['GDeg1']}  dR=GDeg2={sol['GDeg2']}  dM=GMat={sol['GMat']}",
         f"nLIN={sol['nLIN']}  alpha={sol['alpha']:.6f}  lin_at={sol['lin_at']}",
+        f"GnD enabled={sol['gnd_enabled']}  counts={sol['gnd_counts']}",
+        f"GnD locations={sol['gnd_at']}",
         "",
     ]
     for rnd in range(sol["TR"]):

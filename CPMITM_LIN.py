@@ -106,6 +106,19 @@ def add_copy(model, src, dst, name):
     model.addConstr(dst.red == src.red, name=name + "_r")
 
 
+def add_gnd(model, before, name):
+    """白格猜为 B/R/G 的着色抽象；具体双向猜测相容性须事后验证。"""
+    after = Cell(model, name + "_after")
+    gb = model.addVar(vtype=GRB.BINARY, name=name + "_gB")
+    gr = model.addVar(vtype=GRB.BINARY, name=name + "_gR")
+    gbr = model.addVar(vtype=GRB.BINARY, name=name + "_gBR")
+    model.addConstr(gb + gr + gbr <= before.w, name=name + "_white")
+    model.addConstr(after.b == before.b + gb + gbr, name=name + "_b")
+    model.addConstr(after.red == before.red + gr + gbr, name=name + "_r")
+    model.addConstr(after.w == before.w - gb - gr - gbr, name=name + "_w")
+    return after, (gb, gr, gbr)
+
+
 def add_sc(model, src, dst, ell, name):
     """正向时 src 是 S 盒输入；反向时 src 是 S 盒输出。ell 由调用方创建。"""
     green = add_and(model, src.b, src.red, name + "_g")

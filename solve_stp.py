@@ -20,8 +20,7 @@ with localcontext() as ctx:
 
 
 def candidates():
-    # t = min(dB-alpha*n, dR-alpha*n, dM), with n in {0,1,2}.
-    # Each candidate is the exact symbolic number k - n0*alpha.
+    # 模型强制三个整数目标分量至少为 1，故实际目标 >= 1-2*alpha > 0。
     return sorted(((k, n0) for k in range(1, 17) for n0 in range(3)),
                   key=lambda item: Decimal(item[0]) - A*item[1])
 
@@ -35,8 +34,10 @@ def conditions(index, n, threshold):
     # alpha is in (0, 1/2), so ceil((n-n0)*alpha) is 1 iff n > n0.
     key_min = k + int(n > n0)
     match_min = k
-    return [index.nlin == n, index.GDeg1 >= key_min,
-            index.GDeg2 >= key_min, index.GMat >= match_min]
+    return [index.nlin == n,
+            index.GDeg1 - index.n_gr - index.n_gbr >= key_min,
+            index.GDeg2 - index.n_gb - index.n_gbr >= key_min,
+            index.GMat - index.n_gb - index.n_gr - index.n_gbr >= match_min]
 
 
 def run_solver(executable, text, timeout):
@@ -64,7 +65,7 @@ def load_values(model, output):
 
 
 def solve(args, ini, mat):
-    model, index = build_model(args.tr, ini, mat)
+    model, index = build_model(args.tr, ini, mat, enable_gnd=not args.no_gnd)
     stem = Path(args.outdir) / f'TR{args.tr}_ini{ini}_mat{mat}'
     stem.parent.mkdir(parents=True, exist_ok=True)
     if args.write_only:
@@ -98,7 +99,12 @@ def solve(args, ini, mat):
                 if status2 != 'sat': raise RuntimeError('重解时结果不一致')
                 load_values(model, output)
                 model.validate(extra)
-                index.GObj = SimpleNamespace(X=min(index.GDeg1.X-ALPHA*n, index.GDeg2.X-ALPHA*n, index.GMat.X))
+                gb = sum(v.X for v in index.guess_b)
+                gr = sum(v.X for v in index.guess_r)
+                gbr = sum(v.X for v in index.guess_br)
+                index.GObj = SimpleNamespace(X=min(index.GDeg1.X-ALPHA*n-gr-gbr,
+                                                   index.GDeg2.X-ALPHA*n-gb-gbr,
+                                                   index.GMat.X-gb-gr-gbr))
                 solution = extract_solution(index)
                 best = (solution, query, output)
                 any_sat = True; break
@@ -115,7 +121,7 @@ def solve(args, ini, mat):
     stem.with_suffix('.stp.out').write_text(output, encoding='utf-8')
     stem.with_suffix('.json').write_text(json.dumps(sol, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     stem.with_suffix('.txt').write_text(format_report(sol) + f"status={sol['status']}\n", encoding='utf-8')
-    print(f"{sol['status']}: GObj={sol['GObj']:.6f}, dB={sol['GDeg1']}, dR={sol['GDeg2']}, dM={sol['GMat']}, nLIN={sol['nLIN']}", flush=True)
+    print(f"{sol['status']}: GObj={sol['GObj']:.6f}, dB={sol['GDeg1']}, dR={sol['GDeg2']}, dM={sol['GMat']}, nLIN={sol['nLIN']}, GnD={sol['gnd_counts']}", flush=True)
     return sol
 
 
@@ -126,6 +132,7 @@ def main():
     p.add_argument('--time', type=float, default=120, help='每个切分总时限（秒）；0 为不限时')
     p.add_argument('--stp', default='stp', help='STP 可执行文件路径')
     p.add_argument('--outdir', default='stp_solutions'); p.add_argument('--write-only', action='store_true')
+    p.add_argument('--no-gnd', action='store_true', help='禁用 GnD，退化为原着色模型')
     args = p.parse_args()
     if not 2 <= args.tr <= 128: p.error('轮数须在 2..128，确保 16 位有符号算术不溢出')
     if args.time < 0: p.error('--time 不能为负')
